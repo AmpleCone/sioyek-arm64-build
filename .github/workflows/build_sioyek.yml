@@ -1,0 +1,121 @@
+
+name: Build Sioyek for Apple Silicon
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout Sioyek
+        uses: actions/checkout@v4
+        with:
+          repository: ahrm/sioyek
+          ref: development
+          submodules: recursive
+
+      - name: Install Qt
+        run: |
+          brew install qt
+          echo "$(brew --prefix qt)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify runner
+        run: |
+          uname -m
+          test "$(uname -m)" = "arm64"
+
+      - name: Build MuPDF
+        run: |
+          cd mupdf
+          make HAVE_GLUT=no -j3
+
+      - name: Build Sioyek
+        run: |
+          sed -i '' \
+            's/QMAKE_MACOSX_DEPLOYMENT_TARGET = .*/QMAKE_MACOSX_DEPLOYMENT_TARGET = 26/' \
+            pdf_viewer_build_config.pro
+
+          qmake \
+            "CONFIG+=release" \
+            "CONFIG+=non_portable" \
+            "QMAKE_CXXFLAGS+=-Wno-implicit-function-declaration" \
+            pdf_viewer_build_config.pro
+
+          make -j3
+
+      - name: Assemble app
+        run: |
+          mkdir -p build
+          mv sioyek.app build/
+
+          APP=build/sioyek.app/Contents/MacOS
+
+          cp -R pdf_viewer/shaders "$APP/"
+          cp pdf_viewer/prefs.config "$APP/"
+          cp pdf_viewer/prefs_user.config "$APP/"
+          cp pdf_viewer/keys.config "$APP/"
+          cp pdf_viewer/keys_user.config "$APP/"
+          cp tutorial.pdf "$APP/"
+
+          macdeployqt build/sioyek.app
+
+      - name: Verify ARM64 architecture
+        run: |
+          APP=build/sioyek.app
+          file "$APP/Contents/MacOS/sioyek"
+          lipo -archs "$APP/Contents/MacOS/sioyek"
+
+          python3 - <<'PY'
+          import os
+          import subprocess
+
+          root = "build/sioyek.app"
+          checked = 0
+
+          for directory, _, files in os.walk(root):
+              for filename in files:
+                  path = os.path.join(directory, filename)
+                  result = subprocess.run(
+                      ["file", "-b", path],
+                      capture_output=True,
+                      text=True
+                  )
+                  if "Mach-O" not in result.stdout:
+                      continue
+
+                  archs = subprocess.check_output(
+                      ["lipo", "-archs", path],
+                      text=True
+                  ).split()
+
+                  if "arm64" not in archs:
+                      raise SystemExit(
+                          f"Non-ARM64 binary: {path}: {archs}"
+                      )
+                  checked += 1
+
+          print(f"Verified {checked} Mach-O binaries")
+          PY
+
+      - name: Sign app
+        run: |
+          codesign --force --deep --sign - build/sioyek.app
+          codesign --verify --deep --strict --verbose=2 \
+            build/sioyek.app
+
+      - name: Package
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent \
+            sioyek.app sioyek-macos-arm64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sioyek-macos-arm64
+          path: build/sioyek-macos-arm64.zip
