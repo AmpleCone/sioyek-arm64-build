@@ -48,21 +48,36 @@ jobs:
 
           make -j3
 
+
       - name: Assemble app
         run: |
           mkdir -p build
           mv sioyek.app build/
+      
+          APP="build/sioyek.app"
+          RESOURCES="$APP/Contents/Resources"
+      
+          # First deploy Qt frameworks
+          macdeployqt "$APP" -no-codesign
+      
+          # Install resources in the correct macOS bundle location
+          mkdir -p "$RESOURCES"
+      
+          cp pdf_viewer/prefs.config "$RESOURCES/"
+          cp pdf_viewer/keys.config "$RESOURCES/"
+          cp pdf_viewer/prefs_user.config "$RESOURCES/"
+          cp pdf_viewer/keys_user.config "$RESOURCES/"
+          cp tutorial.pdf "$RESOURCES/"
+          cp -R pdf_viewer/shaders "$RESOURCES/"
+      
+          # Verify required resources
+          test -f "$RESOURCES/prefs.config"
+          test -f "$RESOURCES/keys.config"
+          test -f "$RESOURCES/tutorial.pdf"
+          test -d "$RESOURCES/shaders"
+      
+          echo "Sioyek resources installed successfully."
 
-          APP=build/sioyek.app/Contents/MacOS
-
-          cp -R pdf_viewer/shaders "$APP/"
-          cp pdf_viewer/prefs.config "$APP/"
-          cp pdf_viewer/prefs_user.config "$APP/"
-          cp pdf_viewer/keys.config "$APP/"
-          cp pdf_viewer/keys_user.config "$APP/"
-          cp tutorial.pdf "$APP/"
-
-          macdeployqt build/sioyek.app
 
       - name: Verify ARM64 architecture
         run: |
